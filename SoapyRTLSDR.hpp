@@ -250,6 +250,7 @@ public:
     std::atomic<size_t>	_buf_count;
     signed char *_currentBuff;
     std::atomic<bool> _overflowEvent;
+    std::atomic<bool> _errorEvent;
     size_t _currentHandle;
     size_t bufferedElems;
     std::atomic<bool> resetBuffer;

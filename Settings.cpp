@@ -121,7 +121,10 @@ SoapyRTLSDR::SoapyRTLSDR(const SoapySDR::Kwargs &args)
 
     SoapySDR_logf(SOAPY_SDR_DEBUG, "RTL-SDR opening device %d", deviceId);
 
-    rtlsdr_open(&dev, deviceId);
+    if (rtlsdr_open(&dev, deviceId) < 0)
+    {
+      throw std::runtime_error("Failed to acquire RTL-SDR device.");
+    }
 }
 
 SoapyRTLSDR::~SoapyRTLSDR(void)
@@ -180,7 +183,7 @@ void SoapyRTLSDR::setAntenna(const int direction, const size_t channel, const st
 {
     if (direction != SOAPY_SDR_RX)
     {
-        throw std::runtime_error("setAntena failed: RTL-SDR only supports RX");
+        throw std::runtime_error("setAntenna failed: RTL-SDR only supports RX");
     }
 }
 
@@ -205,8 +208,14 @@ bool SoapyRTLSDR::hasFrequencyCorrection(const int direction, const size_t chann
 
 void SoapyRTLSDR::setFrequencyCorrection(const int direction, const size_t channel, const double value)
 {
-    ppm = int(value);
-    rtlsdr_set_freq_correction(dev, ppm);
+    int newPpm = int(value);
+
+    if (rtlsdr_set_freq_correction(dev, newPpm) < 0)
+    {
+        throw std::runtime_error("setFrequencyCorrection failed: driver reported error");
+    }
+
+    ppm = newPpm;
 }
 
 double SoapyRTLSDR::getFrequencyCorrection(const int direction, const size_t channel) const
@@ -245,9 +254,12 @@ bool SoapyRTLSDR::hasGainMode(const int direction, const size_t channel) const
 
 void SoapyRTLSDR::setGainMode(const int direction, const size_t channel, const bool automatic)
 {
-    agcMode = automatic;
     SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RTL-SDR AGC: %s", automatic ? "Automatic" : "Manual");
-    rtlsdr_set_agc_mode(dev, agcMode ? 1 : 0);
+    if (rtlsdr_set_agc_mode(dev, automatic ? 1 : 0) < 0)
+    {
+        throw std::runtime_error("setGainMode failed: USB error");
+    }
+    agcMode = automatic;
 }
 
 bool SoapyRTLSDR::getGainMode(const int direction, const size_t channel) const
@@ -269,26 +281,32 @@ void SoapyRTLSDR::setGain(const int direction, const size_t channel, const std::
         int stage = 1;
         if (name.length() > 2)
         {
-            int stage_in = name.at(2) - '0';
-            if ((stage_in < 1) || (stage_in > 6))
+            stage = name.at(2) - '0';
+            if ((stage < 1) || (stage > 6))
             {
                 throw std::runtime_error("Invalid IF stage, 1 or 1-6 for E4000");
             }
         }
+        double gain = value;
         if (tunerType == RTLSDR_TUNER_E4000) {
-            IFGain[stage - 1] = getE4000Gain(stage, (int)value);
-        } else {
-            IFGain[stage - 1] = value;
+            gain = getE4000Gain(stage, (int)value);
         }
-        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RTL-SDR IF Gain for stage %d: %f", stage, IFGain[stage - 1]);
-        rtlsdr_set_tuner_if_gain(dev, stage, (int) IFGain[stage - 1] * 10.0);
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RTL-SDR IF Gain for stage %d: %f", stage, gain);
+        if (rtlsdr_set_tuner_if_gain(dev, stage, (int) IFGain[stage - 1] * 10.0) < 0)
+        {
+            throw std::runtime_error("setGain failed: driver reported error setting tuner IF gain");
+        }
+        IFGain[stage - 1] = gain;
     }
 
     if (name == "TUNER")
     {
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RTL-SDR Tuner Gain: %f", value);
+        if (rtlsdr_set_tuner_gain(dev, (int) value * 10.0) < 0)
+        {
+            throw std::runtime_error("setGain failed: driver reported error setting tuner gain");
+        }
         tunerGain = value;
-        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting RTL-SDR Tuner Gain: %f", tunerGain);
-        rtlsdr_set_tuner_gain(dev, (int) tunerGain * 10.0);
     }
 }
 
@@ -357,16 +375,27 @@ void SoapyRTLSDR::setFrequency(
 {
     if (name == "RF")
     {
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting center freq: %d", (uint32_t) frequency);
+
+        if (rtlsdr_set_center_freq(dev, (uint32_t) frequency) < 0)
+        {
+            throw std::runtime_error("setFrequency failed: driver reported error setting center frequency");
+        }
+
         centerFrequency = (uint32_t) frequency;
         resetBuffer = true;
-        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting center freq: %d", centerFrequency);
-        rtlsdr_set_center_freq(dev, centerFrequency);
     }
 
     if (name == "CORR")
     {
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting ppm freq correction: %d", (uint32_t) frequency);
+
+        if (rtlsdr_set_freq_correction(dev, (int) frequency) < 0)
+        {
+            throw std::runtime_error("setFrequency failed: driver reported error setting frequency correction ppm");
+        }
+
         ppm = (int) frequency;
-        rtlsdr_set_freq_correction(dev, ppm);
     }
 }
 
@@ -433,10 +462,16 @@ SoapySDR::ArgInfoList SoapyRTLSDR::getFrequencyArgsInfo(const int direction, con
 
 void SoapyRTLSDR::setSampleRate(const int direction, const size_t channel, const double rate)
 {
-    sampleRate = rate;
+    SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting sample rate: %d", rate);
+
+    if (rtlsdr_set_sample_rate(dev, sampleRate) < 0)
+    {
+       throw std::runtime_error("setSampleRate failed: driver reported error");
+    }
+
+    sampleRate = rtlsdr_get_sample_rate(dev);
     resetBuffer = true;
-    SoapySDR_logf(SOAPY_SDR_DEBUG, "Setting sample rate: %d", sampleRate);
-    rtlsdr_set_sample_rate(dev, sampleRate);
+    SoapySDR_logf(SOAPY_SDR_DEBUG, "Set sample rate: %d", sampleRate);
 }
 
 double SoapyRTLSDR::getSampleRate(const int direction, const size_t channel) const
@@ -531,16 +566,21 @@ void SoapyRTLSDR::writeSetting(const std::string &key, const std::string &value)
 {
     if (key == "direct_samp")
     {
+        int newMode;
         try
         {
-            directSamplingMode = std::stoi(value);
+            newMode = std::stoi(value);
         }
         catch (const std::invalid_argument &) {
             SoapySDR_logf(SOAPY_SDR_ERROR, "RTL-SDR invalid direct sampling mode '%s', [0:Off, 1:I-ADC, 2:Q-ADC]", value.c_str());
-            directSamplingMode = 0;
+            return;
         }
-        SoapySDR_logf(SOAPY_SDR_DEBUG, "RTL-SDR direct sampling mode: %d", directSamplingMode);
-        rtlsdr_set_direct_sampling(dev, directSamplingMode);
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "RTL-SDR direct sampling mode: %d", newMode);
+        if (rtlsdr_set_direct_sampling(dev, newMode) < 0)
+        {
+            throw std::runtime_error("writeSetting failed: driver reported error setting direct sampling");
+        }
+        directSamplingMode = newMode;
     }
     else if (key == "iq_swap")
     {
@@ -549,9 +589,19 @@ void SoapyRTLSDR::writeSetting(const std::string &key, const std::string &value)
     }
     else if (key == "offset_tune")
     {
-        offsetMode = (value == "true") ? true : false;
-        SoapySDR_logf(SOAPY_SDR_DEBUG, "RTL-SDR offset_tune mode: %s", offsetMode ? "true" : "false");
-        rtlsdr_set_offset_tuning(dev, offsetMode ? 1 : 0);
+        bool newMode = (value == "true") ? true : false;
+        SoapySDR_logf(SOAPY_SDR_DEBUG, "RTL-SDR offset_tune mode: %s", newMode ? "true" : "false");
+        switch (rtlsdr_set_offset_tuning(dev, newMode ? 1 : 0))
+        {
+        case -2:
+            throw std::runtime_error("writeSetting failed: tuner does not support offset tuning");
+        case -3:
+            throw std::runtime_error("writeSetting failed: cannot enable offset tuning with direct sampling");
+        default:
+            throw std::runtime_error("writeSetting failed: driver reported error setting offset tuning");
+        case 0:
+            offsetMode = newMode;
+        }
     }
 }
 

@@ -106,7 +106,10 @@ static void _rx_callback(unsigned char *buf, uint32_t len, void *ctx)
 void SoapyRTLSDR::rx_async_operation(void)
 {
     //printf("rx_async_operation\n");
-    rtlsdr_read_async(dev, &_rx_callback, this, asyncBuffs, bufferLength);
+    if (rtlsdr_read_async(dev, &_rx_callback, this, asyncBuffs, bufferLength) < 0)
+    {
+      _errorEvent = true;
+    }
     //printf("rx_async_operation done!\n");
 }
 
@@ -314,6 +317,7 @@ int SoapyRTLSDR::activateStream(
     //start the async thread
     if (not _rx_async_thread.joinable())
     {
+        _errorEvent = false;
         rtlsdr_reset_buffer(dev);
         _rx_async_thread = std::thread(&SoapyRTLSDR::rx_async_operation, this);
     }
@@ -479,6 +483,12 @@ int SoapyRTLSDR::acquireReadBuffer(
         _overflowEvent = false;
         SoapySDR::log(SOAPY_SDR_SSI, "O");
         return SOAPY_SDR_OVERFLOW;
+    }
+
+    //handle errors from the rx callback thread
+    if (_errorEvent)
+    {
+      return SOAPY_SDR_STREAM_ERROR;
     }
 
     //wait for a buffer to become available
