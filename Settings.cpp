@@ -148,10 +148,9 @@ SoapySDR::Kwargs SoapyRTLSDR::getHardwareInfo(void) const
 {
     //key/value pairs for any useful information
     //this also gets printed in --probe
-    SoapySDR::Kwargs args;
+    SoapySDR::Kwargs args = SoapyRTLSDR::rtl_devices[deviceId];
 
     args["origin"] = "https://github.com/pothosware/SoapyRTLSDR";
-    args["rtl"] = std::to_string(deviceId);
 
     return args;
 }
